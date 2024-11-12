@@ -18,7 +18,7 @@ const processFile = (filePath: string) => {
         return;
     }
 
-    const newFilePath = filePath.split('/').slice(0, -1).join('/')
+    const newFilePath = filePath.split('/').slice(0, -1).join('/') + '/'
         + fileName.replace('.vue', '.new.vue');
 
     if (fs.existsSync(newFilePath)) {

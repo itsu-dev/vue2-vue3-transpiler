@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "index.ts",
   "scripts": {
-    "dev": "clear && ts-node src/main.ts Test.vue",
+    "dev": "clear && rm -rf dialog/*.new.vue && ts-node src/main.ts dialog",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

@@ -19,8 +19,6 @@ const NOT_ALLOWED_IMPORTS = ["VueBase.vue", "vue-property-decorator"];
 const TODO_MESSAGE = 'TODO: 自動変換失敗';
 
 const LIFECYCLES: Record<string, string> = {
-    'beforeCreate': 'onBeforeMount',
-    'created': 'onMounted',
     'beforeMount': 'onBeforeMount',
     'mounted': 'onMounted',
     'beforeUpdate': 'onBeforeUpdate',
@@ -32,6 +30,8 @@ const LIFECYCLES: Record<string, string> = {
     'errorCaptured': 'onErrorCaptured',
     'serverPrefetch': 'onServerPrefetch',
 };
+
+const REMOVED_LIFECYCLES = ['created', 'beforeCreate'];
 
 type VueRef = {
     type: string;
@@ -95,9 +95,26 @@ export default function processScript(block: SFCBlock): string {
             script += ` {${notDefaultSpecifiers.join(', ')}}`;
         }
 
-        script += ` from ${Q}${stmt.source.value}${Q}${SC}\n`;
+        script += ` from ${Q}${stmt.source.value}${Q}${SC}`;
 
         return script;
+    }
+
+    /** Array */
+    function arrayExpr(arrayExpr: TSESTree.ArrayExpression) {
+        let contents = arrayExpr.elements.map((e) => {
+            if (e == null) {
+                return '';
+            }
+
+            if (e.type === 'SpreadElement') {
+                return `...${expr(e.argument)}`;
+            }
+
+            return expr(e);
+        }).join(', ');
+
+        return `[${contents}]`;
     }
 
     /** Literal **/
@@ -120,15 +137,22 @@ export default function processScript(block: SFCBlock): string {
     }
 
     /** MemberExpression **/
-    function member(member: TSESTree.MemberExpression): string {
+    function memberExpr(member: TSESTree.MemberExpression): string {
         if (member.object.type === 'ThisExpression') {
-            return `${expr(member.property as TSESTree.Expression)}`;
+            if (member.computed) {
+                return `[${expr(member.property as TSESTree.Expression)}]`;    
+            }
+            return expr(member.property as TSESTree.Expression);
         }
-        return `${expr(member.object)}.${expr(member.property as TSESTree.Expression)}`;
+
+        if (member.computed) {
+            return `${expr(member.object)}${member.optional ? '?' : ''}[${expr(member.property as TSESTree.Expression)}]`;    
+        }
+        return `${expr(member.object)}${member.optional ? '?' : ''}.${expr(member.property as TSESTree.Expression)}`;
     }
 
-    /** BinaryExpression **/
-    function binary(binaryExpr: TSESTree.BinaryExpression): string {
+    /** BinaryExpression or LogicalExpression **/
+    function binaryOrLogicalExpr(binaryExpr: TSESTree.BinaryExpression | TSESTree.LogicalExpression): string {
         // TODO: paren...
         const left = expr(binaryExpr.left as TSESTree.Expression);
         const right = expr(binaryExpr.right as TSESTree.Expression);
@@ -136,7 +160,7 @@ export default function processScript(block: SFCBlock): string {
     }
 
     /** ObjectExpression **/
-    function object(objectExpr: TSESTree.ObjectExpression): string {
+    function objectExpr(objectExpr: TSESTree.ObjectExpression): string {
         const properties = objectExpr.properties.map((property) => {
             const key = expr((property as TSESTree.Property).key);
             const value = expr((property as TSESTree.Property).value as TSESTree.Expression);
@@ -146,7 +170,7 @@ export default function processScript(block: SFCBlock): string {
     }
 
     /** ConditionalExpression **/
-    function conditional(conditionalExpr: TSESTree.ConditionalExpression): string {
+    function conditionalExpr(conditionalExpr: TSESTree.ConditionalExpression): string {
         const test = expr(conditionalExpr.test);
         const consequent = expr(conditionalExpr.consequent);
         const alternate = expr(conditionalExpr.alternate);
@@ -154,7 +178,7 @@ export default function processScript(block: SFCBlock): string {
     }
 
     /** CallExpression **/
-    function call(callExpr: TSESTree.CallExpression): string {
+    function callExpr(callExpr: TSESTree.CallExpression): string {
         // append a callee
         // abc.callee(args0, args1);
         // ^^^^^^^^^^^ here
@@ -194,7 +218,7 @@ export default function processScript(block: SFCBlock): string {
     }
 
     /** AssignmentExpression **/
-    function assignment(assignmentExpr: TSESTree.AssignmentExpression): string {
+    function assignmentExpr(assignmentExpr: TSESTree.AssignmentExpression): string {
         // append a left
         // left = right;
         // ^^^^ here
@@ -214,7 +238,7 @@ export default function processScript(block: SFCBlock): string {
     }
 
     /** ArrowFunctionExpression **/
-    function arrowFunction(arrowFunctionExpr: TSESTree.ArrowFunctionExpression): string {
+    function arrowFunctionExpr(arrowFunctionExpr: TSESTree.ArrowFunctionExpression): string {
         let script = '';
         script += '(';
 
@@ -256,7 +280,7 @@ export default function processScript(block: SFCBlock): string {
     }
 
     /** UnaryExpression **/
-    function unary(unaryExpr: TSESTree.UnaryExpression): string {
+    function unaryExpr(unaryExpr: TSESTree.UnaryExpression): string {
         console.log(unaryExpr)
         return `${unaryExpr.operator}${expr(unaryExpr.argument)}`;
     }
@@ -266,35 +290,171 @@ export default function processScript(block: SFCBlock): string {
         return `${expr(updateExpr.argument)}${updateExpr.operator}`;
     }
 
+    /** AwaitExpression */
+    function awaitExpr(e: TSESTree.AwaitExpression): string {
+        return `await ${expr(e.argument)}`;
+    }
+
+    function functionExpr(e: TSESTree.FunctionExpression): string {
+        let script = 'function (';
+
+        if (e.params.length > 0) {
+            e.params.forEach((_param, index) => {
+                const param = _param as TSESTree.Identifier;
+                // append a parameter name
+                // function name(a: Type, b: Type): Type {
+                //               ^ here
+                script += param.name;
+
+                // append a type annotation
+                // function name(a: Type, b: Type): Type {
+                //                ^^^^^^ here
+                if (param.typeAnnotation?.typeAnnotation) {
+                    script += ': ';
+                    script += typeName(param.typeAnnotation.typeAnnotation);
+                }
+
+                // append a comma
+                // function name(a: Type, b: Type): Type {
+                //                      ^^ here
+                if (index < e.params.length - 1) {
+                    script += ', ';
+                }
+            });
+        }
+
+        // append a ) and {
+        // function name(a: Type, b: Type): Type {
+        //                               ^ here
+        script += ')';
+
+        // append a return type annotation
+        // function name(a: Type, b: Type): Type {
+        //                                ^^^^^^ here
+        if (e.returnType) {
+            script += ': ';
+            script += typeName(e.returnType.typeAnnotation);
+        }
+
+        // append a {
+        // function name(a: Type, b: Type): Type {
+        //                                      ^^ here
+        script += ' {\n';
+
+        // process a body
+        // function name(a: Type, b: Type) {
+        //   // here
+        // }
+        (e.body?.body ?? []).forEach((s) => {
+            script += `  ${stmt(s)}\n`;
+        });
+
+        // append a }
+        // function name(a: Type, b: Type) {
+        //   // ...
+        // }
+        // ^ here
+        script += '}';
+
+        return script;
+    }
+
+    /** ImportExpression */
+    function importExpr(e: TSESTree.ImportExpression): string {
+        return `import(${expr(e.source)})`;
+    }
+
+    /** TemplateLiteral */
+    function templateLiteralExpr(e: TSESTree.TemplateLiteral): string {
+        let exprIndex = 0;
+        const content = e.quasis.map((q) => {
+            if (q.value.raw) {
+                return q.value.raw;
+            } else {
+                const result = `$\{${expr(e.expressions[exprIndex])}\}`;
+                exprIndex++;
+                return result;
+            }
+        }).join('');
+
+        return `\`${content}\``;
+    }
+
+    /** ChainExpression */
+    function chainExpr(e: TSESTree.ChainExpression): string {
+        return `${expr(e.expression)}`;
+    }
+
+    /** NewExpression */
+    function newExpr(e: TSESTree.NewExpression): string {
+        let content = e.arguments.map((arg) => {
+            if (arg.type !== 'SpreadElement') {
+                // append an argument
+                // new callee(args0, args1);
+                //            ^^^^^ here
+                return expr(arg);
+            } else {
+                // append a spread argument
+                // new callee(args0, ...args1);
+                //                   ^^^^^^^^ here
+                return `...${expr(arg.argument as TSESTree.Expression)}`;
+            }
+        }).join(', ');
+
+        return `new ${expr(e.callee)}(${content})`
+    }
+
+    /** TsAsExpression */
+    function tsAsExpr(e: TSESTree.TSAsExpression): string {
+        return `${expr(e.expression)} as ${typeName(e.typeAnnotation)}`;
+    }
+
     /**
      * Process an expression
      **/
     function expr(e: TSESTree.Expression): string {
         switch (e.type) {
+            case 'ArrayExpression':
+                return arrayExpr(e as TSESTree.ArrayExpression);
             case 'Literal':
                 return literal(e as TSESTree.Literal);
             case 'Identifier':
                 return identifier(e as TSESTree.Identifier);
             case 'MemberExpression':
-                return member(e as TSESTree.MemberExpression);
+                return memberExpr(e as TSESTree.MemberExpression);
             case 'ThisExpression':
                 return '';
             case 'BinaryExpression':
-                return binary(e as TSESTree.BinaryExpression);
+            case 'LogicalExpression':
+                return binaryOrLogicalExpr(e as TSESTree.BinaryExpression | TSESTree.LogicalExpression);
             case 'ObjectExpression':
-                return object(e as TSESTree.ObjectExpression);
+                return objectExpr(e as TSESTree.ObjectExpression);
             case 'ConditionalExpression':
-                return conditional(e as TSESTree.ConditionalExpression);
+                return conditionalExpr(e as TSESTree.ConditionalExpression);
             case 'CallExpression':
-                return call(e as TSESTree.CallExpression);
+                return callExpr(e as TSESTree.CallExpression);
             case 'AssignmentExpression':
-                return assignment(e as TSESTree.AssignmentExpression);
+                return assignmentExpr(e as TSESTree.AssignmentExpression);
             case 'ArrowFunctionExpression':
-                return arrowFunction(e as TSESTree.ArrowFunctionExpression);
+                return arrowFunctionExpr(e as TSESTree.ArrowFunctionExpression);
             case 'UnaryExpression':
-                return unary(e as TSESTree.UnaryExpression);
+                return unaryExpr(e as TSESTree.UnaryExpression);
             case 'UpdateExpression':
                 return updateExpr(e as TSESTree.UpdateExpression);
+            case 'AwaitExpression':
+                return awaitExpr(e as TSESTree.AwaitExpression);
+            case 'FunctionExpression':
+                return functionExpr(e as TSESTree.FunctionExpression);
+            case 'ImportExpression':
+                return importExpr(e as TSESTree.ImportExpression);
+            case 'TemplateLiteral':
+                return templateLiteralExpr(e as TSESTree.TemplateLiteral);
+            case 'ChainExpression':
+                return chainExpr(e as TSESTree.ChainExpression);
+            case 'NewExpression':
+                return newExpr(e as TSESTree.NewExpression);
+            case 'TSAsExpression':
+                return tsAsExpr(e as TSESTree.TSAsExpression);
             default:
                 return `/* ${TODO_MESSAGE} */`;
         }
@@ -390,11 +550,13 @@ export default function processScript(block: SFCBlock): string {
 
         // process later
         if (isProp()) {
-            const argsObj = objectToExprRecord((stmt.decorators[0].expression as TSESTree.CallExpression).arguments[0] as TSESTree.ObjectExpression) as Record<keyof VueProp, TSESTree.Expression>
+            const argsObj: Record<string, TSESTree.Expression> | undefined = (stmt.decorators[0].expression as TSESTree.CallExpression).arguments.length > 0
+                ? objectToExprRecord((stmt.decorators[0].expression as TSESTree.CallExpression).arguments[0] as TSESTree.ObjectExpression) as Record<keyof VueProp, TSESTree.Expression>
+                : undefined;
             props[expr(stmt.key as TSESTree.Expression)] = {
-                type: boxPrimitiveType((argsObj.type as TSESTree.Identifier).name),
-                required: argsObj.required,
-                default: argsObj.default
+                type: stmt.typeAnnotation ? typeName(stmt.typeAnnotation.typeAnnotation) : '',
+                required: argsObj?.required,
+                default: argsObj?.default
             }
             return undefined;
         }
@@ -454,6 +616,16 @@ export default function processScript(block: SFCBlock): string {
             });
             script += `})${SC}\n\n`;
 
+            return script;
+        }
+
+        // check if the method is a removed lifecycle hook
+        // NOTE: created and beforeCreate is removed on Vue3
+        if (REMOVED_LIFECYCLES.includes(name)) {
+            (methodDefinitionStmt.value.body?.body ?? []).forEach((s) => {
+                script += `${stmt(s)}\n`;
+            });
+            script += '\n';
             return script;
         }
 
@@ -641,8 +813,12 @@ export default function processScript(block: SFCBlock): string {
         script += stmt(s.consequent);
 
         if (s.alternate) {
-            script = script.slice(0, -2);
-            script += ' else ';
+            if (s.consequent.type === 'BlockStatement') {
+                script = script.slice(0, -2);
+                script += ' \n} else ';
+            } else {
+                script += ' \nelse ';
+            }
             script += stmt(s.alternate);
         }
 
@@ -949,7 +1125,7 @@ export default function processScript(block: SFCBlock): string {
     stmts.forEach((s) => {
         const text = stmt(s);
         if (text) {
-            result += text;
+            result += `${text}\n`;
         }
     });
 

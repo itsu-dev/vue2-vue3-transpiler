@@ -34,7 +34,7 @@ const LIFECYCLES: Record<string, string> = {
 const REMOVED_LIFECYCLES = ['created', 'beforeCreate'];
 
 type VueRef = {
-    type: string;
+    type?: string;
     value?: TSESTree.Expression;
 }
 
@@ -148,7 +148,25 @@ export default function processScript(block: SFCBlock): string {
         if (member.computed) {
             return `${expr(member.object)}${member.optional ? '?' : ''}[${expr(member.property as TSESTree.Expression)}]`;    
         }
-        return `${expr(member.object)}${member.optional ? '?' : ''}.${expr(member.property as TSESTree.Expression)}`;
+
+        let object = expr(member.object);
+        let property = expr(member.property as TSESTree.Expression);
+        
+        if (object === "$refs") {
+            if (!Object.keys(refs).includes(property)) {
+                refs[property] = {
+                    type: undefined,
+                    value: {
+                        type: 'Literal',
+                        raw: 'null',
+                        value: null,
+                    } as TSESTree.Literal
+                };
+            }
+            return `${property}.value`;    
+        }
+
+        return `${object}${member.optional ? '?' : ''}.${property}`;
     }
 
     /** BinaryExpression or LogicalExpression **/
@@ -281,7 +299,6 @@ export default function processScript(block: SFCBlock): string {
 
     /** UnaryExpression **/
     function unaryExpr(unaryExpr: TSESTree.UnaryExpression): string {
-        console.log(unaryExpr)
         return `${unaryExpr.operator}${expr(unaryExpr.argument)}`;
     }
 
@@ -406,7 +423,7 @@ export default function processScript(block: SFCBlock): string {
 
     /** TsAsExpression */
     function tsAsExpr(e: TSESTree.TSAsExpression): string {
-        return `${expr(e.expression)} as ${typeName(e.typeAnnotation)}`;
+        return `(${expr(e.expression)} as ${typeName(e.typeAnnotation)})`;
     }
 
     /**
@@ -1067,7 +1084,7 @@ export default function processScript(block: SFCBlock): string {
 
         const newLines: string[] = [];
         Object.entries(refs).forEach(([key, value]) => {
-            let line = `const ${key} = ref<${value.type}>(${value.value ? expr(value.value) : ''});`;
+            let line = `const ${key} = ref${value.type ? `<${value.type}>` : ''}(${value.value ? expr(value.value) : ''});`;
             newLines.push(line);
         });
 

@@ -1177,20 +1177,19 @@ export default function processScript(block: SFCBlock): string {
 
         const newLines: string[] = [];
         for(const watch of watches) {
-            const args: string[] = [];
             const contents = watch.method.value.params.map((_param) => {
                 const param = _param as TSESTree.Identifier;
                 const type = param.typeAnnotation?.typeAnnotation
                     ? `: ${typeName(param.typeAnnotation.typeAnnotation)}`
                     : '';
-                args.push(param.name + type);
-            });
+                return param.name + type;
+            }).join(', ');
 
             const returnType = watch.method.value.returnType
                 ? `: ${typeName(watch.method.value.returnType.typeAnnotation)}`
                 : '';
 
-            newLines.push(`watch(${expr(watch.target)}, (${contents.join(', ')})${returnType} => `);
+            newLines.push(`watch(${expr(watch.target)}, (${contents})${returnType} => `);
             
             if (watch.method.value.body) {
                 newLines.push(stmt(watch.method.value.body));

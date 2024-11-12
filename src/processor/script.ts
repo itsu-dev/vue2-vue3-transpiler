@@ -440,6 +440,16 @@ export default function processScript(block: SFCBlock): string {
         return `...${expr(e.argument)}` ;
     }
 
+    /** Super */
+    function superExpr(e: TSESTree.Super): string {
+        return 'super';
+    }
+
+    /** YieldExpression */
+    function yieldExpr(e: TSESTree.YieldExpression): string {
+        return `yield ${e.argument ? expr(e.argument) : ''}`;
+    }
+
     /**
      * Process an expression
      **/
@@ -488,6 +498,10 @@ export default function processScript(block: SFCBlock): string {
                 return tsAsExpr(e as TSESTree.TSAsExpression);
             case 'SpreadElement':
                 return spreadElement(e as TSESTree.SpreadElement);
+            case 'Super':
+                return superExpr(e as TSESTree.Super);
+            case 'YieldExpression':
+                return yieldExpr(e as TSESTree.YieldExpression);
             default:
                 return `/* ${TODO_MESSAGE} */`;
         }

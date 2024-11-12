@@ -33,7 +33,7 @@ this.$refs.root.innerText = "";
 
 ```ts
 const root = ref(null);
-root.value.innetText = "";
+root.value.innerText = "";
 ```
 
 #### @Prop
@@ -44,11 +44,11 @@ root.value.innetText = "";
 
 ```ts
 interface Props {
-  popupHeader?: string,
+  title?: string,
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  popupHeader: "入力エラー",
+  title: "Title",
 });
 ```
 

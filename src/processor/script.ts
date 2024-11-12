@@ -184,7 +184,7 @@ export default function processScript(block: SFCBlock): string {
             const value = expr((property as TSESTree.Property).value as TSESTree.Expression);
             return `${key}: ${value}`;
         });
-        return `{\n${properties.join(',\n')}}`;
+        return `{ ${properties.join(', ')} }`;
     }
 
     /** ConditionalExpression **/
@@ -500,8 +500,14 @@ export default function processScript(block: SFCBlock): string {
                 return 'any';
             case 'TSArrayType':
                 return typeName(typeNode.elementType) + '[]';
-            case 'TSTypeReference':
-                return (typeNode.typeName as TSESTree.Identifier).name;
+            case 'TSTypeReference': {
+                let name = (typeNode.typeName as TSESTree.Identifier).name;
+                if (typeNode.typeArguments) {
+                    const args = typeNode.typeArguments.params.map(typeName);
+                    name += `<${args.join(', ')}>`;
+                }
+                return name;
+            }
             case 'TSUnionType':
                 return typeNode.types.map(typeName).join(' | ');
             case 'TSIntersectionType':

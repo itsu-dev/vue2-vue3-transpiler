@@ -129,4 +129,4 @@ someValue = "";
 - If there are `@Ref` value whose name is same with identifiers that is used in the file,
 such identifiers are replaced with `someIdentifier.value`.
 - Also need code formatters: This transpiler does NOT maintain code formats, so you may need additional code formatters such as Prettier.
-- Redundant parensthese for expressions.
+- Redundant parentheses for expressions.

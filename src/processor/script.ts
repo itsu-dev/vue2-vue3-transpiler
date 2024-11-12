@@ -49,6 +49,10 @@ type VueComputed = {
     set?: TSESTree.Statement[];
 }
 
+type VueEmit = {
+    method: TSESTree.MethodDefinition;
+}
+
 export default function processScript(block: SFCBlock): string {
     let result = "";
 
@@ -56,8 +60,8 @@ export default function processScript(block: SFCBlock): string {
     const refs: Record<string, VueRef> = {};
     const props: Record<string, VueProp> = {};
     const computeds: Record<string, VueComputed> = {};
+    const emits: Record<string, VueEmit> = {};
     const watches: Record<string, TSESTree.Expression> = {};
-    const emits: Record<string, TSESTree.Expression> = {};
 
     function returnStmt(stmt: TSESTree.ReturnStatement): string {
         let script = "return";
@@ -184,7 +188,7 @@ export default function processScript(block: SFCBlock): string {
             const value = expr((property as TSESTree.Property).value as TSESTree.Expression);
             return `${key}: ${value}`;
         });
-        return `{ ${properties.join(', ')} }`;
+        return properties.length > 0 ? `{ ${properties.join(', ')} }` : '{}';
     }
 
     /** ConditionalExpression **/
@@ -678,6 +682,20 @@ export default function processScript(block: SFCBlock): string {
             return undefined;
         }
 
+        /**
+         * Check if the property is a @Prop
+         */
+        const isEmit = () => {
+            return methodDefinitionStmt.decorators?.some(decorator => decorator.expression.type === 'CallExpression' && expr(decorator.expression.callee as TSESTree.Expression) === 'Emit');
+        }
+
+        // process later
+        if (isEmit()) {
+            emits[name] = {
+                method: methodDefinitionStmt,
+            };
+        }
+
         // append a function keyword
         // function name(a: Type, b: Type): Type {
         // ^^^^^^^^ here
@@ -732,13 +750,27 @@ export default function processScript(block: SFCBlock): string {
         //                                      ^^ here
         script += ' {\n';
 
-        // process a body
-        // function name(a: Type, b: Type) {
-        //   // here
-        // }
-        (methodDefinitionStmt.value.body?.body ?? []).forEach((s) => {
-            script += `  ${stmt(s)}\n`;
-        });
+        if (!isEmit()) {
+            // process a body
+            // function name(a: Type, b: Type) {
+            //   // here
+            // }
+            (methodDefinitionStmt.value.body?.body ?? []).forEach((s) => {
+                script += `  ${stmt(s)}\n`;
+            });
+        } else {
+            // create such function:
+            // function name(arg0: Type, arg1: Type): Type {
+            //   emit('name', arg0, arg1);
+            // }
+            const args = [`${Q}${name}${Q}`];
+            methodDefinitionStmt.value.params.forEach((_param, index) => {
+                const param = _param as TSESTree.Identifier;
+                args.push(param.name);
+            });
+
+            script += `  emit(${args.join(', ')})${SC}\n`;
+        }
 
         // append a }
         // function name(a: Type, b: Type) {
@@ -1099,6 +1131,40 @@ export default function processScript(block: SFCBlock): string {
         insertUnderImports(newLines);
     }
 
+    /** Insert Emits */
+    function insertEmits() {
+        if (Object.keys(emits).length === 0) {
+            return;
+        }
+
+        const newLines: string[] = ['interface Emits {'];
+
+        Object.entries(emits).forEach(([key, { method }]) => {
+            let args = [`e: ${Q}${key}${Q}`];
+
+            method.value.params.forEach((_param) => {
+                const param = _param as TSESTree.Identifier;
+                const type = param.typeAnnotation?.typeAnnotation
+                    ? `: ${typeName(param.typeAnnotation.typeAnnotation)}`
+                    : '';
+                args.push(param.name + type);
+            });
+
+            const returnType = method.value.returnType
+                ? `: ${typeName(method.value.returnType.typeAnnotation)}`
+                : '';
+
+            newLines.push(`  (${args.join(', ')})${returnType}${IF_DELIMITER}`);
+        });
+
+        newLines.push('}');
+        newLines.push('');
+        newLines.push(`const emit = defineEmits<Emits>();`)
+        newLines.push('');
+
+        insertUnderImports(newLines);
+    }
+
     /** Insert props **/
     function insertProps() {
         if (Object.keys(props).length === 0) {
@@ -1109,7 +1175,7 @@ export default function processScript(block: SFCBlock): string {
 
         Object.entries(props).forEach(([key, value]) => {
             let line = `  ${key}`;
-            if (!value.required || expr(value.required) === 'false') {
+            if (!value.required || expr( value.required) === 'false') {
                 line += '?';
             }
 
@@ -1156,6 +1222,7 @@ export default function processScript(block: SFCBlock): string {
     insertVueImports();
     insertComputeds();
     insertRefs();
+    insertEmits();
     insertProps();
 
     // prettier

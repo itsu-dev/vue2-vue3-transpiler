@@ -53,6 +53,11 @@ type VueEmit = {
     method: TSESTree.MethodDefinition;
 }
 
+type VueWatch = {
+    target: TSESTree.Expression | TSESTree.SpreadElement;
+    method: TSESTree.MethodDefinition;
+}
+
 export default function processScript(block: SFCBlock): string {
     let result = "";
 
@@ -61,7 +66,7 @@ export default function processScript(block: SFCBlock): string {
     const props: Record<string, VueProp> = {};
     const computeds: Record<string, VueComputed> = {};
     const emits: Record<string, VueEmit> = {};
-    const watches: Record<string, TSESTree.Expression> = {};
+    const watches: VueWatch[] = [];
 
     function returnStmt(stmt: TSESTree.ReturnStatement): string {
         let script = "return";
@@ -430,10 +435,15 @@ export default function processScript(block: SFCBlock): string {
         return `(${expr(e.expression)} as ${typeName(e.typeAnnotation)})`;
     }
 
+    /** SpreadElement */
+    function spreadElement(e: TSESTree.SpreadElement): string {
+        return `...${expr(e.argument)}` ;
+    }
+
     /**
      * Process an expression
      **/
-    function expr(e: TSESTree.Expression): string {
+    function expr(e: TSESTree.Expression | TSESTree.SpreadElement): string {
         switch (e.type) {
             case 'ArrayExpression':
                 return arrayExpr(e as TSESTree.ArrayExpression);
@@ -476,6 +486,8 @@ export default function processScript(block: SFCBlock): string {
                 return newExpr(e as TSESTree.NewExpression);
             case 'TSAsExpression':
                 return tsAsExpr(e as TSESTree.TSAsExpression);
+            case 'SpreadElement':
+                return spreadElement(e as TSESTree.SpreadElement);
             default:
                 return `/* ${TODO_MESSAGE} */`;
         }
@@ -687,6 +699,28 @@ export default function processScript(block: SFCBlock): string {
          */
         const isEmit = () => {
             return methodDefinitionStmt.decorators?.some(decorator => decorator.expression.type === 'CallExpression' && expr(decorator.expression.callee as TSESTree.Expression) === 'Emit');
+        }
+
+        /**
+         * Check if the property is a @Prop
+         */
+        const isWatch = () => {
+            return methodDefinitionStmt.decorators?.some(decorator => decorator.expression.type === 'CallExpression' && expr(decorator.expression.callee as TSESTree.Expression) === 'Watch');
+        }
+
+        // process later
+        if (isWatch()) {
+            const decorator = methodDefinitionStmt.decorators?.find(decorator => 
+                decorator.expression.type === 'CallExpression'
+                && expr(decorator.expression.callee as TSESTree.Expression) === 'Watch'
+            )!;
+            
+            watches.push({
+                target: (decorator.expression as TSESTree.CallExpression).arguments[0]!,
+                method: methodDefinitionStmt,
+            });
+
+            return undefined;
         }
 
         // process later
@@ -1069,6 +1103,10 @@ export default function processScript(block: SFCBlock): string {
             tokens.push('computed');
         }
 
+        if (watches.length > 0) {
+            tokens.push('watch');
+        }
+
         // if (Object.keys(props).length > 0) {
         //     tokens.push('defineProps');
         // }
@@ -1131,6 +1169,40 @@ export default function processScript(block: SFCBlock): string {
         insertUnderImports(newLines);
     }
 
+    /** Insert Watches */
+    function insertWatches() {
+        if (watches.length === 0) {
+            return;
+        }
+
+        const newLines: string[] = [];
+        for(const watch of watches) {
+            const args: string[] = [];
+            const contents = watch.method.value.params.map((_param) => {
+                const param = _param as TSESTree.Identifier;
+                const type = param.typeAnnotation?.typeAnnotation
+                    ? `: ${typeName(param.typeAnnotation.typeAnnotation)}`
+                    : '';
+                args.push(param.name + type);
+            });
+
+            const returnType = watch.method.value.returnType
+                ? `: ${typeName(watch.method.value.returnType.typeAnnotation)}`
+                : '';
+
+            newLines.push(`watch(${expr(watch.target)}, (${contents.join(', ')})${returnType} => `);
+            
+            if (watch.method.value.body) {
+                newLines.push(stmt(watch.method.value.body));
+            }
+            
+            newLines.push(`)${SC}`);
+            newLines.push('');
+        }
+
+        insertUnderImports(newLines);
+    }
+
     /** Insert Emits */
     function insertEmits() {
         if (Object.keys(emits).length === 0) {
@@ -1140,7 +1212,7 @@ export default function processScript(block: SFCBlock): string {
         const newLines: string[] = ['interface Emits {'];
 
         Object.entries(emits).forEach(([key, { method }]) => {
-            let args = [`e: ${Q}${key}${Q}`];
+            const args = [`e: ${Q}${key}${Q}`];
 
             method.value.params.forEach((_param) => {
                 const param = _param as TSESTree.Identifier;
@@ -1222,6 +1294,7 @@ export default function processScript(block: SFCBlock): string {
     insertVueImports();
     insertComputeds();
     insertRefs();
+    insertWatches();
     insertEmits();
     insertProps();
 

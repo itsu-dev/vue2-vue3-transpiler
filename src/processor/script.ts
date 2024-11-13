@@ -61,6 +61,7 @@ type VueWatch = {
 export default function processScript(block: SFCBlock, isMixin: boolean): string | undefined {
     let result = "";
 
+    let needNextTick = false;
     const lifecycleHooks: string[] = [];
     const refs: Record<string, VueRef> = {};
     const props: Record<string, VueProp> = {};
@@ -148,10 +149,16 @@ export default function processScript(block: SFCBlock, isMixin: boolean): string
     /** MemberExpression **/
     function memberExpr(member: TSESTree.MemberExpression): string {
         if (member.object.type === 'ThisExpression') {
-            if (member.computed) {
-                return `[${expr(member.property as TSESTree.Expression)}]`;    
+            let property = expr(member.property as TSESTree.Expression);
+
+            if (Object.keys(props).includes(property)) {
+                property = `props.${property}`;
             }
-            return expr(member.property as TSESTree.Expression);
+            
+            if (member.computed) {
+                return `[${property}]`;    
+            }
+            return property;
         }
 
         if (member.computed) {
@@ -213,7 +220,12 @@ export default function processScript(block: SFCBlock, isMixin: boolean): string
         // append a callee
         // abc.callee(args0, args1);
         // ^^^^^^^^^^^ here
-        let script = expr(callExpr.callee);
+        let callee = expr(callExpr.callee);
+        if (callee.startsWith('$nextTick')) {
+            needNextTick = true;
+            callee = callee.replace('$nextTick', 'nextTick');
+        }
+        let script = callee;
         script += '(';
 
         if (callExpr.arguments.length > 0) {
@@ -1152,6 +1164,10 @@ export default function processScript(block: SFCBlock, isMixin: boolean): string
             tokens.push('watch');
         }
 
+        if (needNextTick) {
+            tokens.push('nextTick');
+        }
+
         // if (Object.keys(props).length > 0) {
         //     tokens.push('defineProps');
         // }
@@ -1183,8 +1199,8 @@ export default function processScript(block: SFCBlock, isMixin: boolean): string
             if (value.set) {
                 newLines.push(`  },`);
                 newLines.push(`  set: (value) => {`);
-                value.set.forEach(stmt => {
-                    newLines.push(`    ${stmt}`);
+                value.set.forEach((s) => {
+                    newLines.push(`    ${stmt(s)}`);
                 });
                 newLines.push(`  }`);
             } else {

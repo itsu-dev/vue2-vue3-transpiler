@@ -1084,6 +1084,15 @@ export default function processScript(block: SFCBlock, isMixin: boolean): string
         return script;
     }
 
+    /** BreakStatement or ContinueStatement */
+    function breakOrContinueStmt(s: TSESTree.BreakStatement | TSESTree.ContinueStatement): string {
+        let script = s.type === 'BreakStatement' ? 'break' : 'continue';
+        if (s.label != null) {
+            script += ` ${expr(s.label)}`;
+        }
+        return `${script}${SC}`;
+    }
+
     /**
      * Process a statement
      * {
@@ -1127,6 +1136,10 @@ export default function processScript(block: SFCBlock, isMixin: boolean): string
                 break;
             case 'ForInStatement':
                 script = forOfOrInStmt(stmt as TSESTree.ForInStatement, false);
+                break;
+            case 'BreakStatement':
+            case 'ContinueStatement':
+                script = breakOrContinueStmt(stmt as TSESTree.BreakStatement);
                 break;
             default:
                 script = `// ${TODO_MESSAGE}`;

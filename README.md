@@ -1,4 +1,4 @@
-# Vue2 to Vue3 Transpiler
+# Vue2 to Vue3 Transpiler (beta)
 
 A Transpiler for Vue2 Applications with [vue-property-decorator](https://github.com/kaorun343/vue-property-decorator) and Vue Class Component.
 

@@ -1,3 +1,4 @@
 node_modules/
 *.vue
 .idea/
+.DS_Store

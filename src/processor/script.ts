@@ -792,7 +792,8 @@ export default function processScript(block: SFCBlock, isMixin: boolean): string
         // append a return type annotation
         // function name(a: Type, b: Type): Type {
         //                                ^^^^^^ here
-        if (methodDefinitionStmt.value.returnType) {
+        // NOTE: emit function does not need type annotation because they always return nothing.
+        if (!isEmit() && methodDefinitionStmt.value.returnType) {
             script += ': ';
             script += typeName(methodDefinitionStmt.value.returnType.typeAnnotation);
         }
@@ -811,15 +812,23 @@ export default function processScript(block: SFCBlock, isMixin: boolean): string
                 script += `  ${stmt(s)}\n`;
             });
         } else {
+            // process a body
+            // function name(a: Type, b: Type) {
+            //   // here
+            // }
+            (methodDefinitionStmt.value.body?.body.filter((stmt) => stmt.type !== 'ReturnStatement') ?? []).forEach((s) => {
+                script += `  ${stmt(s)}\n`;
+            });
+
             // create such function:
             // function name(arg0: Type, arg1: Type): Type {
             //   emit('name', arg0, arg1);
             // }
             const args = [`${Q}${name}${Q}`];
-            methodDefinitionStmt.value.params.forEach((_param, index) => {
-                const param = _param as TSESTree.Identifier;
-                args.push(param.name);
-            });
+            const returnStmt = methodDefinitionStmt.value.body?.body?.find((stmt) => stmt.type === 'ReturnStatement');
+            if (returnStmt?.argument) {
+                args.push(expr(returnStmt.argument))
+            }
 
             script += `  emit(${args.join(', ')})${SC}\n`;
         }

@@ -271,6 +271,12 @@ export default function processScript(block: SFCBlock, isMixin: boolean): string
     /** ArrowFunctionExpression **/
     function arrowFunctionExpr(arrowFunctionExpr: TSESTree.ArrowFunctionExpression): string {
         let script = '';
+
+        // async
+        if (arrowFunctionExpr.async) {
+            script += 'async ';
+        }
+
         script += '(';
 
         if (arrowFunctionExpr.params.length > 0) {
@@ -326,7 +332,14 @@ export default function processScript(block: SFCBlock, isMixin: boolean): string
     }
 
     function functionExpr(e: TSESTree.FunctionExpression): string {
-        let script = 'function (';
+        let script = '';
+        
+        // async
+        if (e.async) {
+            script += 'async ';
+        }
+
+        script += 'function (';
 
         if (e.params.length > 0) {
             e.params.forEach((_param, index) => {
@@ -748,10 +761,15 @@ export default function processScript(block: SFCBlock, isMixin: boolean): string
             };
         }
 
+        // async
+        if (methodDefinitionStmt.value.async) {
+            script += 'async ';
+        }
+
         // append a function keyword
         // function name(a: Type, b: Type): Type {
         // ^^^^^^^^ here
-        script += "function ";
+        script += 'function ';
 
         // append a name and (
         // function name(a: Type, b: Type): Type {

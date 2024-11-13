@@ -62,6 +62,7 @@ export default function processScript(block: SFCBlock, isMixin: boolean): string
     let result = "";
 
     let needNextTick = false;
+    let needGetCurrentInstance = false;
     const lifecycleHooks: string[] = [];
     const refs: Record<string, VueRef> = {};
     const props: Record<string, VueProp> = {};
@@ -224,6 +225,9 @@ export default function processScript(block: SFCBlock, isMixin: boolean): string
         if (callee.startsWith('$nextTick')) {
             needNextTick = true;
             callee = callee.replace('$nextTick', 'nextTick');
+        } else if (callee.startsWith('$forceUpdate')) {
+            needGetCurrentInstance = true;
+            callee = callee.replace('$forceUpdate', 'getCurrentInstance().proxy.forceUpdate');
         }
         let script = callee;
         script += '(';
@@ -1181,6 +1185,10 @@ export default function processScript(block: SFCBlock, isMixin: boolean): string
             tokens.push('nextTick');
         }
 
+        if (needGetCurrentInstance) {
+            tokens.push('getCurrentInstance');
+        }
+
         // if (Object.keys(props).length > 0) {
         //     tokens.push('defineProps');
         // }
@@ -1370,12 +1378,12 @@ export default function processScript(block: SFCBlock, isMixin: boolean): string
     });
 
     // insert ref, props and necessary imports.
-    insertVueImports();
     insertComputeds();
     insertRefs();
     insertWatches();
     insertEmits();
     insertProps();
+    insertVueImports();
 
     // prettier
     prettier();

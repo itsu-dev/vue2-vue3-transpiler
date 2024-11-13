@@ -175,6 +175,10 @@ export default function processScript(block: SFCBlock, isMixin: boolean): string
             return `${property}.value`;    
         }
 
+        if (Object.keys(props).includes(object)) {
+            object = `props.${object}`;
+        }
+
         return `${object}${member.optional ? '?' : ''}.${property}`;
     }
 

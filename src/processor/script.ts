@@ -58,7 +58,7 @@ type VueWatch = {
     method: TSESTree.MethodDefinition;
 }
 
-export default function processScript(block: SFCBlock): string {
+export default function processScript(block: SFCBlock, isMixin: boolean): string | undefined {
     let result = "";
 
     const lifecycleHooks: string[] = [];
@@ -595,7 +595,7 @@ export default function processScript(block: SFCBlock): string {
         // process later
         if (isRef()) {
             refs[expr(stmt.key as TSESTree.Expression)] = {
-                type: expr((stmt.typeAnnotation?.typeAnnotation as TSESTree.TSTypeReference).typeName as TSESTree.Expression),
+                type: stmt.typeAnnotation ? typeName(stmt.typeAnnotation.typeAnnotation) : undefined,
                 value: (stmt.value as TSESTree.Expression | null) ?? undefined
             };
             return undefined;
@@ -1296,6 +1296,12 @@ export default function processScript(block: SFCBlock): string {
 
     // process each lines
     const stmts = parseForESLint(block.content).ast.body;
+
+    // if there is no export default class declaration, then this file is regarded as processed.
+    if (!stmts.some((stmt) => stmt.type === 'ExportDefaultDeclaration' && stmt.declaration.type === 'ClassDeclaration')) {
+        return undefined;
+    }
+
     stmts.forEach((s) => {
         const text = stmt(s);
         if (text) {

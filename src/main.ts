@@ -18,34 +18,41 @@ const processFile = (filePath: string) => {
         return;
     }
 
-    const newFilePath = filePath.split('/').slice(0, -1).join('/') + '/'
-        + fileName.replace('.vue', '.new.vue');
-
-    if (fs.existsSync(newFilePath)) {
-        fs.unlinkSync(newFilePath);
-    }
-
     console.log(filePath);
 
     const input = fs.readFileSync(filePath).toString();
     const res = parseComponent(input);
 
-    // Write <template>
-    if (res.template) {
-        writeFile(newFilePath, processTemplate(res.template));
-        writeReturn2(newFilePath);
-    }
-
     // Write <script>
     if (res.script) {
-        writeFile(newFilePath, processScript(res.script));
-        writeReturn2(newFilePath);
-    }
+        // if there is no templates, then this file is regarded as Mixin
+        const isMixin = res.template == null;
 
-    // Write <style>
-    for (const style of res.styles) {
-        writeFile(newFilePath, processStyle(style));
-        writeReturn2(newFilePath);
+        const script = processScript(res.script, isMixin);
+        if (script == null) {
+            return;
+        }
+
+        // remove the old file
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+        }
+
+        // Write <template>
+        if (res.template) {
+            writeFile(filePath, processTemplate(res.template));
+            writeReturn2(filePath);
+        }
+
+        // write <script>
+        writeFile(filePath, script);
+        writeReturn2(filePath);
+
+        // Write <style>
+        for (const style of res.styles) {
+            writeFile(filePath, processStyle(style));
+            writeReturn2(filePath);
+        }
     }
 }
 

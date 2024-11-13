@@ -52,6 +52,8 @@ const props = withDefaults(defineProps<Props>(), {
 });
 ```
 
+And, all occurences of `@Prop` references are replaced with `props.someValue`.
+
 #### @Emit
 
 ```ts
@@ -122,6 +124,41 @@ will be:
 ```ts
 someValue = "";
 ```
+
+## Lifecycle Hooks migration
+
+These lifecycle hooks will be replaced with:
+
+```yaml
+beforeMount: onBeforeMount
+mounted: onMounted
+beforeUpdate: onBeforeUpdate
+updated: onUpdated
+beforeDestroy: onBeforeUnmount
+destroyed: onUnmounted
+activated: onActivated
+deactivated: onDeactivated
+errorCaptured: onErrorCaptured
+serverPrefetch: onServerPrefetch
+```
+
+For example, `mounted` will be transpiled as:
+
+```ts
+private mounted(): void {
+  console.log(1);
+}
+```
+
+```ts
+import { onMounted } from 'vue';
+
+onMounted(() => {
+  console.log(1);
+});
+```
+
+On the other hand, statements in `created` and `beforeCreate` will be expanded at the top-level.
 
 ## Known issues
 

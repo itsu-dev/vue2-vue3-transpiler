@@ -58,9 +58,11 @@ type VueWatch = {
     method: TSESTree.MethodDefinition;
 }
 
-export default function processScript(block: SFCBlock): string {
+export default function processScript(block: SFCBlock, isMixin: boolean): string | undefined {
     let result = "";
 
+    let needNextTick = false;
+    let needGetCurrentInstance = false;
     const lifecycleHooks: string[] = [];
     const refs: Record<string, VueRef> = {};
     const props: Record<string, VueProp> = {};
@@ -148,10 +150,16 @@ export default function processScript(block: SFCBlock): string {
     /** MemberExpression **/
     function memberExpr(member: TSESTree.MemberExpression): string {
         if (member.object.type === 'ThisExpression') {
-            if (member.computed) {
-                return `[${expr(member.property as TSESTree.Expression)}]`;    
+            let property = expr(member.property as TSESTree.Expression);
+
+            if (Object.keys(props).includes(property)) {
+                property = `props.${property}`;
             }
-            return expr(member.property as TSESTree.Expression);
+            
+            if (member.computed) {
+                return `[${property}]`;    
+            }
+            return property;
         }
 
         if (member.computed) {
@@ -173,6 +181,10 @@ export default function processScript(block: SFCBlock): string {
                 };
             }
             return `${property}.value`;    
+        }
+
+        if (Object.keys(props).includes(object)) {
+            object = `props.${object}`;
         }
 
         return `${object}${member.optional ? '?' : ''}.${property}`;
@@ -209,7 +221,15 @@ export default function processScript(block: SFCBlock): string {
         // append a callee
         // abc.callee(args0, args1);
         // ^^^^^^^^^^^ here
-        let script = expr(callExpr.callee);
+        let callee = expr(callExpr.callee);
+        if (callee.startsWith('$nextTick')) {
+            needNextTick = true;
+            callee = callee.replace('$nextTick', 'nextTick');
+        } else if (callee.startsWith('$forceUpdate')) {
+            needGetCurrentInstance = true;
+            callee = callee.replace('$forceUpdate', 'getCurrentInstance().proxy.forceUpdate');
+        }
+        let script = callee;
         script += '(';
 
         if (callExpr.arguments.length > 0) {
@@ -267,6 +287,12 @@ export default function processScript(block: SFCBlock): string {
     /** ArrowFunctionExpression **/
     function arrowFunctionExpr(arrowFunctionExpr: TSESTree.ArrowFunctionExpression): string {
         let script = '';
+
+        // async
+        if (arrowFunctionExpr.async) {
+            script += 'async ';
+        }
+
         script += '(';
 
         if (arrowFunctionExpr.params.length > 0) {
@@ -322,7 +348,14 @@ export default function processScript(block: SFCBlock): string {
     }
 
     function functionExpr(e: TSESTree.FunctionExpression): string {
-        let script = 'function (';
+        let script = '';
+        
+        // async
+        if (e.async) {
+            script += 'async ';
+        }
+
+        script += 'function (';
 
         if (e.params.length > 0) {
             e.params.forEach((_param, index) => {
@@ -595,7 +628,7 @@ export default function processScript(block: SFCBlock): string {
         // process later
         if (isRef()) {
             refs[expr(stmt.key as TSESTree.Expression)] = {
-                type: expr((stmt.typeAnnotation?.typeAnnotation as TSESTree.TSTypeReference).typeName as TSESTree.Expression),
+                type: stmt.typeAnnotation ? typeName(stmt.typeAnnotation.typeAnnotation) : undefined,
                 value: (stmt.value as TSESTree.Expression | null) ?? undefined
             };
             return undefined;
@@ -744,10 +777,15 @@ export default function processScript(block: SFCBlock): string {
             };
         }
 
+        // async
+        if (methodDefinitionStmt.value.async) {
+            script += 'async ';
+        }
+
         // append a function keyword
         // function name(a: Type, b: Type): Type {
         // ^^^^^^^^ here
-        script += "function ";
+        script += 'function ';
 
         // append a name and (
         // function name(a: Type, b: Type): Type {
@@ -788,7 +826,8 @@ export default function processScript(block: SFCBlock): string {
         // append a return type annotation
         // function name(a: Type, b: Type): Type {
         //                                ^^^^^^ here
-        if (methodDefinitionStmt.value.returnType) {
+        // NOTE: emit function does not need type annotation because they always return nothing.
+        if (!isEmit() && methodDefinitionStmt.value.returnType) {
             script += ': ';
             script += typeName(methodDefinitionStmt.value.returnType.typeAnnotation);
         }
@@ -807,15 +846,23 @@ export default function processScript(block: SFCBlock): string {
                 script += `  ${stmt(s)}\n`;
             });
         } else {
+            // process a body
+            // function name(a: Type, b: Type) {
+            //   // here
+            // }
+            (methodDefinitionStmt.value.body?.body.filter((stmt) => stmt.type !== 'ReturnStatement') ?? []).forEach((s) => {
+                script += `  ${stmt(s)}\n`;
+            });
+
             // create such function:
             // function name(arg0: Type, arg1: Type): Type {
             //   emit('name', arg0, arg1);
             // }
             const args = [`${Q}${name}${Q}`];
-            methodDefinitionStmt.value.params.forEach((_param, index) => {
-                const param = _param as TSESTree.Identifier;
-                args.push(param.name);
-            });
+            const returnStmt = methodDefinitionStmt.value.body?.body?.find((stmt) => stmt.type === 'ReturnStatement');
+            if (returnStmt?.argument) {
+                args.push(expr(returnStmt.argument))
+            }
 
             script += `  emit(${args.join(', ')})${SC}\n`;
         }
@@ -1041,6 +1088,15 @@ export default function processScript(block: SFCBlock): string {
         return script;
     }
 
+    /** BreakStatement or ContinueStatement */
+    function breakOrContinueStmt(s: TSESTree.BreakStatement | TSESTree.ContinueStatement): string {
+        let script = s.type === 'BreakStatement' ? 'break' : 'continue';
+        if (s.label != null) {
+            script += ` ${expr(s.label)}`;
+        }
+        return `${script}${SC}`;
+    }
+
     /**
      * Process a statement
      * {
@@ -1085,6 +1141,10 @@ export default function processScript(block: SFCBlock): string {
             case 'ForInStatement':
                 script = forOfOrInStmt(stmt as TSESTree.ForInStatement, false);
                 break;
+            case 'BreakStatement':
+            case 'ContinueStatement':
+                script = breakOrContinueStmt(stmt as TSESTree.BreakStatement);
+                break;
             default:
                 script = `// ${TODO_MESSAGE}`;
         }
@@ -1121,6 +1181,14 @@ export default function processScript(block: SFCBlock): string {
             tokens.push('watch');
         }
 
+        if (needNextTick) {
+            tokens.push('nextTick');
+        }
+
+        if (needGetCurrentInstance) {
+            tokens.push('getCurrentInstance');
+        }
+
         // if (Object.keys(props).length > 0) {
         //     tokens.push('defineProps');
         // }
@@ -1152,8 +1220,8 @@ export default function processScript(block: SFCBlock): string {
             if (value.set) {
                 newLines.push(`  },`);
                 newLines.push(`  set: (value) => {`);
-                value.set.forEach(stmt => {
-                    newLines.push(`    ${stmt}`);
+                value.set.forEach((s) => {
+                    newLines.push(`    ${stmt(s)}`);
                 });
                 newLines.push(`  }`);
             } else {
@@ -1296,6 +1364,12 @@ export default function processScript(block: SFCBlock): string {
 
     // process each lines
     const stmts = parseForESLint(block.content).ast.body;
+
+    // if there is no export default class declaration, then this file is regarded as processed.
+    if (!stmts.some((stmt) => stmt.type === 'ExportDefaultDeclaration' && stmt.declaration.type === 'ClassDeclaration')) {
+        return undefined;
+    }
+
     stmts.forEach((s) => {
         const text = stmt(s);
         if (text) {
@@ -1304,12 +1378,12 @@ export default function processScript(block: SFCBlock): string {
     });
 
     // insert ref, props and necessary imports.
-    insertVueImports();
     insertComputeds();
     insertRefs();
     insertWatches();
     insertEmits();
     insertProps();
+    insertVueImports();
 
     // prettier
     prettier();

@@ -577,13 +577,18 @@ export default function scriptProcessor() {
         }
 
         function arrayPattern(e: TSESTree.ArrayPattern): string {
-            return `[${e.elements.map((e) => e ? expr(e) : "").join(", ")}]`;
+            return `[${e.elements.map((e) => e ? expr(e) : "").join(", ")}]${e.typeAnnotation ? (e.optional ? '?' : '') + ': ' + typeName(e.typeAnnotation.typeAnnotation) : ''}`;
+        }
+
+        function restElement(e: TSESTree.RestElement): string {
+            // TODO
+            return `...${expr(e.argument)} /* abc rest */`;
         }
     
         /**
          * Process an expression
          **/
-        function expr(e: TSESTree.Expression | TSESTree.SpreadElement | TSESTree.AssignmentPattern | TSESTree.DestructuringPattern): string {
+        function expr(e: TSESTree.Expression | TSESTree.SpreadElement | TSESTree.AssignmentPattern | TSESTree.DestructuringPattern | TSESTree.TSParameterProperty): string {
             switch (e.type) {
                 case 'ArrayExpression':
                     return arrayExpr(e as TSESTree.ArrayExpression);
@@ -638,6 +643,8 @@ export default function scriptProcessor() {
                     return nonNullExpr(e as TSESTree.TSNonNullExpression);
                 case 'ArrayPattern':
                     return arrayPattern(e as TSESTree.ArrayPattern);
+                case 'RestElement':
+                    return restElement(e as TSESTree.RestElement);
                 default:
                     return `/* ${TODO_MESSAGE} (${e.type}) */`;
             }
@@ -798,6 +805,29 @@ export default function scriptProcessor() {
                         script += ": ";
                         script += typeName(e.typeAnnotation.typeAnnotation);
                     }
+
+                    return script;
+                }
+
+                case "TSIndexSignature": {
+                    let script = "";
+
+                    if (e.accessibility) {
+                        script += `${e.accessibility} `;
+                    }
+
+                    if (e.readonly) {
+                        script += "readonly ";
+                    }
+
+                    e.parameters.forEach((param) => {
+                        script += `[${expr(param)}]`
+                        
+                        if (e.typeAnnotation) {
+                            script += ": ";
+                            script += typeName(e.typeAnnotation.typeAnnotation);
+                        }
+                    });
 
                     return script;
                 }
@@ -1076,6 +1106,13 @@ export default function scriptProcessor() {
                 const returnStmt = methodDefinitionStmt.value.body?.body?.find((stmt) => stmt.type === 'ReturnStatement');
                 if (returnStmt?.argument) {
                     args.push(expr(returnStmt.argument))
+                } else {
+                    args.push(...methodDefinitionStmt.value.params.map((param) => {
+                        if (param.type === 'Identifier') {
+                            return param.name;
+                        }
+                        return `"Unknown" /* ${TODO_MESSAGE} */`;
+                    }));
                 }
     
                 script += `  emit(${args.join(', ')})${SC}\n`;
@@ -1372,6 +1409,11 @@ export default function scriptProcessor() {
             return script;
         }
 
+        /** ExportNamedDeclaration */
+        function exportNamedDecl(s: TSESTree.ExportNamedDeclaration): string {
+            return s.declaration ? `export ${stmt(s.declaration)}` : '';
+        }
+
         /**
          * Process a statement
          * {
@@ -1380,7 +1422,7 @@ export default function scriptProcessor() {
          * }
          * @param stmt
          */
-        function stmt(stmt: TSESTree.Statement): string {
+        function stmt(stmt: TSESTree.Statement | /* for not implemented stmts */ TSESTree.NamedExportDeclarations): string {
             let script: string | undefined;
             switch (stmt.type) {
                 case 'ImportDeclaration':
@@ -1432,8 +1474,11 @@ export default function scriptProcessor() {
                 case 'TSTypeAliasDeclaration':
                     script = typeDecl(stmt as TSESTree.TSTypeAliasDeclaration);
                     break;
+                case 'ExportNamedDeclaration':
+                    script = exportNamedDecl(stmt as TSESTree.ExportNamedDeclaration);
+                    break;
                 default:
-                    script = `// ${TODO_MESSAGE}`;
+                    script = `// ${TODO_MESSAGE} (${stmt.type})`;
             }
     
             return script ?? '';

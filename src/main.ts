@@ -1,65 +1,13 @@
-import {parseComponent} from "vue-sfc-parser";
 import fs from "fs";
-import processStyle from "./processor/style";
-import processTemplate from "./processor/template";
-import processScript from "./processor/script";
+import child_process from 'child_process';
+import scriptProcessor from './processor/script';
 
-const writeFile = (filePath: string, content: string) => {
-    fs.writeFileSync(filePath, content, {flag: 'a'});
-}
-
-const writeReturn2 = (filePath: string) => {
-    fs.writeFileSync(filePath, '\n\n', {flag: 'a'});
-}
-
-const processFile = (filePath: string) => {
-    const fileName = filePath.split('/').at(-1)!;
-    if (!fileName.endsWith('.vue')) {
-        return;
-    }
-
-    console.log(filePath);
-
-    const input = fs.readFileSync(filePath).toString();
-    const res = parseComponent(input);
-
-    // Write <script>
-    if (res.script) {
-        // if there is no templates, then this file is regarded as Mixin
-        const isMixin = res.template == null;
-
-        const script = processScript(res.script, isMixin);
-        if (script == null) {
-            return;
-        }
-
-        // remove the old file
-        if (fs.existsSync(filePath)) {
-            fs.unlinkSync(filePath);
-        }
-
-        // Write <template>
-        if (res.template) {
-            writeFile(filePath, processTemplate(res.template));
-            writeReturn2(filePath);
-        }
-
-        // write <script>
-        writeFile(filePath, script);
-        writeReturn2(filePath);
-
-        // Write <style>
-        for (const style of res.styles) {
-            writeFile(filePath, processStyle(style));
-            writeReturn2(filePath);
-        }
-    }
-}
+const processor = scriptProcessor();
 
 const main = (path: string) => {
     const stats = fs.statSync(path);
     if (stats.isFile()) {
-        processFile(path);
+        processor.processFile(path);
     } else {
         const names = fs.readdirSync(path);
         for (const name of names) {
@@ -74,4 +22,18 @@ if (!path) {
     process.exit(1);
 }
 
+const backupPath = `${path}_backup`;
+const isDirectory = fs.statSync(path).isDirectory();
+if (fs.existsSync(backupPath)) {
+    if (isDirectory) {
+        child_process.execSync(`rm -rf ${backupPath}`);
+    } else {
+        fs.unlinkSync(backupPath);
+    }
+}
+
+child_process.execSync(`cp ${isDirectory ? '-r ' : ''}${path} ${backupPath}`);
+
 main(path);
+
+console.log(processor.processedFiles);

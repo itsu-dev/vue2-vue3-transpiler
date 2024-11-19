@@ -364,7 +364,7 @@ export default function scriptProcessor() {
     
         /** ArrowFunctionExpression **/
         function arrowFunctionExpr(arrowFunctionExpr: TSESTree.ArrowFunctionExpression): string {
-            let script = '';
+            let script = '(';
     
             // async
             if (arrowFunctionExpr.async) {
@@ -406,6 +406,8 @@ export default function scriptProcessor() {
             } else {
                 script += expr(arrowFunctionExpr.body as TSESTree.Expression);
             }
+
+            script += ')';
     
             return script;
         }
@@ -560,11 +562,19 @@ export default function scriptProcessor() {
         function yieldExpr(e: TSESTree.YieldExpression): string {
             return `yield ${e.argument ? expr(e.argument) : ''}`;
         }
+
+        function assignmentPattern(e: TSESTree.AssignmentPattern): string {
+            return `${expr(e.left)}${e.typeAnnotation ? (e.optional ? '?' : '') + ': ' + typeName(e.typeAnnotation.typeAnnotation) : ''} = ${expr(e.right)}`;
+        }
+
+        function nonNullExpr(e: TSESTree.TSNonNullExpression) {
+            return `${expr(e.expression)}!`;
+        }
     
         /**
          * Process an expression
          **/
-        function expr(e: TSESTree.Expression | TSESTree.SpreadElement): string {
+        function expr(e: TSESTree.Expression | TSESTree.SpreadElement | TSESTree.AssignmentPattern): string {
             switch (e.type) {
                 case 'ArrayExpression':
                     return arrayExpr(e as TSESTree.ArrayExpression);
@@ -613,8 +623,12 @@ export default function scriptProcessor() {
                     return superExpr(e as TSESTree.Super);
                 case 'YieldExpression':
                     return yieldExpr(e as TSESTree.YieldExpression);
+                case 'AssignmentPattern':
+                    return assignmentPattern(e as TSESTree.AssignmentPattern);
+                case 'TSNonNullExpression':
+                    return nonNullExpr(e as TSESTree.TSNonNullExpression);
                 default:
-                    return `/* ${TODO_MESSAGE} */`;
+                    return `/* ${e.type} ${TODO_MESSAGE} */`;
             }
         }
     

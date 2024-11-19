@@ -641,6 +641,40 @@ export default function scriptProcessor() {
         function typeLiteral(t: TSESTree.TSTypeLiteral): string {
             return `{ ${t.members.map(typeElement).join(", ")} }`;
         }
+
+        function functionParams(params: TSESTree.Parameter[]): string {
+            let script = "";
+
+            params.forEach((_param, index) => {
+                const param = _param as TSESTree.Identifier;
+                // append a parameter name
+                // function name(a: Type, b: Type): Type {
+                //               ^ here
+                script += param.name;
+
+                // append a type annotation
+                // function name(a: Type, b: Type): Type {
+                //                ^^^^^^ here
+                if (param.typeAnnotation?.typeAnnotation) {
+                    script += ': ';
+                    script += typeName(param.typeAnnotation.typeAnnotation);
+                }
+
+                // append a comma
+                // function name(a: Type, b: Type): Type {
+                //                      ^^ here
+                if (index < params.length - 1) {
+                    script += ', ';
+                }
+            });
+
+            return script;
+        }
+
+        /** Functiopn Type */
+        function functionType(t: TSESTree.TSFunctionType): string {
+            return `(${functionParams(t.params)})${typeParams(t.typeParameters?.params)} => ${typeName(t.returnType!.typeAnnotation)}`
+        }
     
         /**
          * Convert a type node to a specific type name
@@ -657,6 +691,10 @@ export default function scriptProcessor() {
                     return 'object';
                 case 'TSVoidKeyword':
                     return 'void';
+                case 'TSUnknownKeyword':
+                    return 'unknown'
+                case 'TSNeverKeyword':
+                    return 'never'
                 case 'TSNullKeyword':
                     return 'null';
                 case 'TSUndefinedKeyword':
@@ -686,7 +724,9 @@ export default function scriptProcessor() {
                 case 'TSPropertySignature':
                     return typeElement(typeNode as TSESTree.TSPropertySignature);
                 case 'TSThisType':
-                    return 'void';                  
+                    return 'void';
+                case 'TSFunctionType':
+                    return functionType(typeNode as TSESTree.TSFunctionType);
                 default:
                     return `any /* ${TODO_MESSAGE} (${typeNode.type}) */`;
             }
@@ -720,7 +760,10 @@ export default function scriptProcessor() {
             return script;
         }
 
-        function typeParams(params: TSESTree.TSTypeParameter[]): string {
+        function typeParams(params: TSESTree.TSTypeParameter[] | undefined): string {
+            if (!params) {
+                return '';
+            }
             return `<${params.map(typeParam).join(", ")}>`;
         }
 
@@ -980,28 +1023,7 @@ export default function scriptProcessor() {
             script += '(';
     
             if (methodDefinitionStmt.value.params.length > 0) {
-                methodDefinitionStmt.value.params.forEach((_param, index) => {
-                    const param = _param as TSESTree.Identifier;
-                    // append a parameter name
-                    // function name(a: Type, b: Type): Type {
-                    //               ^ here
-                    script += param.name;
-    
-                    // append a type annotation
-                    // function name(a: Type, b: Type): Type {
-                    //                ^^^^^^ here
-                    if (param.typeAnnotation?.typeAnnotation) {
-                        script += ': ';
-                        script += typeName(param.typeAnnotation.typeAnnotation);
-                    }
-    
-                    // append a comma
-                    // function name(a: Type, b: Type): Type {
-                    //                      ^^ here
-                    if (index < methodDefinitionStmt.value.params.length - 1) {
-                        script += ', ';
-                    }
-                });
+                script += functionParams(methodDefinitionStmt.value.params);
             }
     
             // append a ) and {

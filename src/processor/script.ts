@@ -164,7 +164,7 @@ export default function scriptProcessor() {
             }
 
             // recursive processing
-            processFile(parentDirPath + (parentDirPath === '' ? '' : '/') + stmt.source.value);
+            // processFile(parentDirPath + (parentDirPath === '' ? '' : '/') + stmt.source.value);
     
             const notDefaultSpecifiers = stmt.specifiers
                 .filter(specifier => specifier.type === 'ImportSpecifier')
@@ -279,6 +279,10 @@ export default function scriptProcessor() {
         /** ObjectExpression **/
         function objectExpr(objectExpr: TSESTree.ObjectExpression): string {
             const properties = objectExpr.properties.map((property) => {
+                if (property.type === 'SpreadElement') {
+                    return expr(property);
+                }
+
                 const key = expr((property as TSESTree.Property).key);
                 const value = expr((property as TSESTree.Property).value as TSESTree.Expression);
                 return `${key}: ${value}`;

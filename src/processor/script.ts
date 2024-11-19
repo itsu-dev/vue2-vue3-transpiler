@@ -575,11 +575,15 @@ export default function scriptProcessor() {
         function nonNullExpr(e: TSESTree.TSNonNullExpression) {
             return `${expr(e.expression)}!`;
         }
+
+        function arrayPattern(e: TSESTree.ArrayPattern): string {
+            return `[${e.elements.map((e) => e ? expr(e) : "").join(", ")}]`;
+        }
     
         /**
          * Process an expression
          **/
-        function expr(e: TSESTree.Expression | TSESTree.SpreadElement | TSESTree.AssignmentPattern): string {
+        function expr(e: TSESTree.Expression | TSESTree.SpreadElement | TSESTree.AssignmentPattern | TSESTree.DestructuringPattern): string {
             switch (e.type) {
                 case 'ArrayExpression':
                     return arrayExpr(e as TSESTree.ArrayExpression);
@@ -632,6 +636,8 @@ export default function scriptProcessor() {
                     return assignmentPattern(e as TSESTree.AssignmentPattern);
                 case 'TSNonNullExpression':
                     return nonNullExpr(e as TSESTree.TSNonNullExpression);
+                case 'ArrayPattern':
+                    return arrayPattern(e as TSESTree.ArrayPattern);
                 default:
                     return `/* ${TODO_MESSAGE} (${e.type}) */`;
             }

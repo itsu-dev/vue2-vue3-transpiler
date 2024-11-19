@@ -279,6 +279,7 @@ export default function scriptProcessor() {
         /** ObjectExpression **/
         function objectExpr(objectExpr: TSESTree.ObjectExpression): string {
             const properties = objectExpr.properties.map((property) => {
+                // for spread element
                 if (property.type === 'SpreadElement') {
                     return expr(property);
                 }
@@ -632,14 +633,19 @@ export default function scriptProcessor() {
                 case 'TSNonNullExpression':
                     return nonNullExpr(e as TSESTree.TSNonNullExpression);
                 default:
-                    return `/* ${e.type} ${TODO_MESSAGE} */`;
+                    return `/* ${TODO_MESSAGE} (${e.type}) */`;
             }
+        }
+
+        /** TypeLiteral */
+        function typeLiteral(t: TSESTree.TSTypeLiteral): string {
+            return `{ ${t.members.map(typeElement).join(", ")} }`;
         }
     
         /**
          * Convert a type node to a specific type name
          **/
-        function typeName(typeNode: TSESTree.TypeNode): string {
+        function typeName(typeNode: TSESTree.TypeNode | TSESTree.TypeElement): string {
             switch (typeNode.type) {
                 case 'TSStringKeyword':
                     return 'string';
@@ -675,8 +681,80 @@ export default function scriptProcessor() {
                     return literal(typeNode.literal as TSESTree.Literal);
                 case 'TSTypeOperator':
                     return typeNode.operator + ' ' + typeName(typeNode.typeAnnotation!);
+                case 'TSTypeLiteral':
+                    return typeLiteral(typeNode as TSESTree.TSTypeLiteral);
+                case 'TSPropertySignature':
+                    return typeElement(typeNode as TSESTree.TSPropertySignature);
+                case 'TSThisType':
+                    return 'void';                  
                 default:
-                    return `any /* ${TODO_MESSAGE} */`;
+                    return `any /* ${TODO_MESSAGE} (${typeNode.type}) */`;
+            }
+        }
+
+        function typeParam(param: TSESTree.TSTypeParameter): string {
+            let script = "";
+
+            if (param.in) {
+                script += "in ";
+            }
+
+            if (param.out) {
+                script += "out ";
+            }
+
+            if (param.const) {
+                script += "const ";
+            }
+
+            script += param.name;
+
+            if (param.constraint) {
+                script += ` extends ${typeName(param.constraint)}`;
+            }
+
+            if (param.default) {
+                script += ` = ${typeName(param.default)}`;
+            }
+
+            return script;
+        }
+
+        function typeParams(params: TSESTree.TSTypeParameter[]): string {
+            return `<${params.map(typeParam).join(", ")}>`;
+        }
+
+        function typeArgs(args: TSESTree.TypeNode[]): string {
+            return `<${args.map(typeName).join(", ")}>`;
+        }
+
+        function typeElement(e: TSESTree.TypeElement): string {
+            switch (e.type) {
+                case "TSPropertySignature": {
+                    let script = "";
+                    if (e.accessibility) {
+                        script += `${e.accessibility} `;
+                    }
+
+                    if (e.readonly) {
+                        script += "readonly ";
+                    }
+
+                    script += expr(e.key);
+
+                    if (e.typeAnnotation) {
+                        if (e.optional) {
+                            script += "?";
+                        }
+                        script += ": ";
+                        script += typeName(e.typeAnnotation.typeAnnotation);
+                    }
+
+                    return script;
+                }
+
+                default:
+                    return `/* TODO ${TODO_MESSAGE} (${e.type}) */`;
             }
         }
     
@@ -1204,7 +1282,68 @@ export default function scriptProcessor() {
             }
             return `${script}${SC}`;
         }
-    
+
+        /** ThrowStatement */
+        function throwStmt(s: TSESTree.ThrowStatement): string {
+            return `throw ${expr(s.argument)}`;
+        }
+
+        /** SwitchStatement */
+        function switchStmt(s: TSESTree.SwitchStatement): string {
+            let lines = [`switch (${expr(s.discriminant)}) {`];
+            
+            s.cases.forEach((c) => {
+                if (c.test) {
+                    lines.push(`case ${expr(c.test)}: `);
+                } else {
+                    lines.push(`default: `);
+                }
+
+                lines.push(...c.consequent.map((cs) => stmt(cs)));
+            });
+
+            lines.push("}");
+
+            return lines.join('\n');
+        }
+
+        /** InterfaceDeclaration */
+        function interfaceDecl(s: TSESTree.TSInterfaceDeclaration): string {
+            let firstLine = `${s.declare ? 'declare' : 'interface'} ${expr(s.id)}`;
+
+            if (s.typeParameters) {
+                firstLine += typeParams(s.typeParameters.params);
+            }
+
+            if (s.extends.length > 0) {
+                firstLine += `extends `;
+                firstLine += s.extends.map((e) => 
+                    `${expr(e.expression)}${e.typeArguments ? typeArgs(e.typeArguments.params) : ""}`
+                ).join(", ")
+            }
+
+            firstLine += " {";
+
+            let lines = [firstLine];
+            lines.push(...s.body.body.map((e) => `${typeElement(e)}${IF_DELIMITER}`));
+
+            lines.push(`}${SC}`);
+            return lines.join("\n");
+        }
+
+        /** TypeDeclaration */
+        function typeDecl(s: TSESTree.TSTypeAliasDeclaration): string {
+            let script = `${s.declare ? 'declare' : 'type'} ${expr(s.id)}`;
+
+            if (s.typeParameters) {
+                script += typeParams(s.typeParameters.params);
+            }
+
+            script += ` = ${typeName(s.typeAnnotation)}${SC}`;
+
+            return script;
+        }
+
         /**
          * Process a statement
          * {
@@ -1252,6 +1391,18 @@ export default function scriptProcessor() {
                 case 'BreakStatement':
                 case 'ContinueStatement':
                     script = breakOrContinueStmt(stmt as TSESTree.BreakStatement);
+                    break;
+                case 'ThrowStatement':
+                    script = throwStmt(stmt as TSESTree.ThrowStatement);
+                    break;
+                case 'SwitchStatement':
+                    script = switchStmt(stmt as TSESTree.SwitchStatement);
+                    break;
+                case 'TSInterfaceDeclaration':
+                    script = interfaceDecl(stmt as TSESTree.TSInterfaceDeclaration);
+                    break;
+                case 'TSTypeAliasDeclaration':
+                    script = typeDecl(stmt as TSESTree.TSTypeAliasDeclaration);
                     break;
                 default:
                     script = `// ${TODO_MESSAGE}`;
